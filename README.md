@@ -1,17 +1,12 @@
 countIt
 =======
 
-Version 1.0.0
+Version 1.2.0
 
 Created by Dr. Alex Pronschinske
    (email: ampron@gmail.com)
 
-Python application to assist in state assignment of noisy data from a system displaying time-dependant switching between quantized states
-
-Introduction
-============
-
-write something here
+Python application to assist in state assignment of noisy data from a system displaying time-dependent switching between quantized states
 
 Software Requirements
 =====================
@@ -48,8 +43,8 @@ Instructions:
     4. Or, place the ".pth" file in the site-packages folder with one line that is
       the location of the "countIt" folder
 
-==============
-Usage Examples
-==============
+=====
+Usage
+=====
 
-write something here
+Place the mobile_countIt.py script in the same folder as the data to be analyzed and run it.
