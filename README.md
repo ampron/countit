@@ -1,7 +1,5 @@
-countIt
-=======
-
-Version 1.2.0
+countIt *Development*
+=====================
 
 Created by Dr. Alex Pronschinske
    (email: ampron@gmail.com)
@@ -18,33 +16,11 @@ This package has the following dependencies:
     * matplotlib >= 1.1.0
     * scikit-learn >= 0.15.2
 
-Installation
-============
+Known Bug List
+==============
 
-You may install this package directly into your python distribution, but it is
-recommended that you instead install the included .pth (path) template file (edited to point to the directory with countIt) instead.
 
-Instructions:
--------------
 
-    1. Open python in the terminal and look up site-packages folder.
->        >>> import sys
->        >>> for p in sys.path:
->        >>>     print repr(p)
->        >>> 
+Improvement Goals
+=================
 
-    2. Typical paths
-    
-        * Windows 7:     "C:\Python2.7\site-packages\"
-        * Linux:         "/usr/lib/python2.7/dist-packages"
-        * Linux (local): "/home/user_name/.local/lib/python2.7/site-packages/"
-    
-    3. Copy the "countIt" folder into the desired folder
-    4. Or, place the ".pth" file in the site-packages folder with one line that is
-      the location of the "countIt" folder
-
-=====
-Usage
-=====
-
-Place the mobile_countIt.py script in the same folder as the data to be analyzed and run it.
