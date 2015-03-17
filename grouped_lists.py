@@ -221,7 +221,10 @@ class GroupedList(Transaction):
         # END for
     # END extend
     
-    def get_group(self, grpname): return set(self._groups[grpname])
+    def get_group(self, grpname=None):
+        if grpname: return set(self._groups[grpname])
+        else: return self.get_ungrouped()
+    # END get_group
     
     def get_list(self): return list(self._objlst)
     
@@ -269,8 +272,11 @@ class GroupedList(Transaction):
     
     def lkup_group(self, x, default=None):
         return self._grp_rlkup.get(x, default)
+    # END lkup_group
     
     def keys(self): return self._groups.keys()
+    
+    def contains_key(self, k): return k in self._groups
     
     def pop(self, i):
         '''Remove and return element at index, i, and it's former group key
@@ -311,11 +317,7 @@ class GroupedList(Transaction):
         pass
     # END remove
     
-    def set_reassign(self, reassign):
-        if not isinstance(reassign, bool):
-            raise TypeError('Argument must be bool')
-        self._reassign = reassign
-    # END set_reassign
+    def set_reassign(self, reassign): self._reassign = bool(reassign)
     
     def sort(self, *args, **kwargs): self._objlst.sort(*args, **kwargs)
     
@@ -400,7 +402,13 @@ class ColoredList(GroupedList):
         return c
     # END list_colors
     
-    def lkup_elem_color(self, x): return self._color_lkup[self._grp_rlkup[x]]
+    def lkup_elem_color(self, x):
+        try:
+            return self._color_lkup[self._grp_rlkup[x]]
+        except KeyError:
+            return None
+        # END try
+    # END lkup_elem_color
     
     def lkup_group_color(self, grpname):
         return self._color_lkup[grpname]
