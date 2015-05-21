@@ -15,20 +15,23 @@ import re
 
 # third-party modules
 import numpy as np
+try:
+    import pyMTRX
+except ImportError:
+    pass
+# END try
 
 #==============================================================================
-def open_jv(file_name):
-    Y = []
-    with open(file_name) as f:
-       for line in f:
-           Y.append(float(line))
-       # END for
-    # END with
-    return np.array(Y)
-# END open_jv
+def mtrx_supported():
+    try:
+        pyMTRX
+        return True
+    except NameError:
+        return False
+# END mtrx_supported
 
 #==============================================================================
-def open_jv_autosave(file_name):
+def open_autosave(file_name):
     Y = []
     lbls = []
     fall_back = False
@@ -55,4 +58,21 @@ def open_jv_autosave(file_name):
         Y = np.array(Y)
     # END if
     return Y, lbls
-# END open_jv_autosave
+# END open_autosave
+
+#==============================================================================
+def open_mtrx(file_name):
+    all_Ys = pyMTRX.import_spectra(file_name)
+    return all_Ys[0].Y
+# END open_jv
+
+#==============================================================================
+def open_jv(file_name):
+    Y = []
+    with open(file_name) as f:
+       for line in f:
+           Y.append(float(line))
+       # END for
+    # END with
+    return np.array(Y)
+# END open_jv

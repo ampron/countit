@@ -138,12 +138,20 @@ class App(object):
         refresh_graph
     '''
     
-    __version__ = '1.2.0d'
-    __author__ = 'Dr. Alex Pronschinske'
+    __version__ = '1.3.0'
     
-    def __init__(self, debug_mode=True):
+    def __init__(self, debug_mode=False):
         self._dbm = debug_mode
+        # Create debugging log
+        self.log = HardLogger(
+            'count_it_v{}_log{}.txt'.format(
+                App.__version__, int(time.time())
+            ),
+            pass_all=not self._dbm
+        )
+        self.log.create_type('ui', 'User Input>>> ')
         
+        self.sig = ''
         self.cwfile = ''
         self._fstk = 'all'
         self._sm_w = 0
@@ -162,15 +170,6 @@ class App(object):
     def run(self):
         '''Run application
         '''
-        # Create debugging log
-        self.log = HardLogger(
-            'count_it_v{}_log{}.txt'.format(
-                App.__version__, int(time.time())
-            ),
-            pass_all=not self._dbm
-        )
-        self.log.create_type('ui', 'User Input>>> ')
-        
         self._line_disp = True
         self._tmpout = ''
         
@@ -241,7 +240,6 @@ class App(object):
         }
         
         self.refresh_graph()
-        #self._root_menu()
         self._idle()
         
         # Clean up
@@ -257,10 +255,15 @@ class App(object):
     #------------
     def _idle(self):
         while True:
+            # refresh text interface menu
             if not self._dbm:
                 os.system('cls' if os.name == 'nt' else 'clear')
             self.print_menu()
+            
+            # wait for user input
             cmd, args = self._input_cmd()
+            
+            # validate input
             if not cmd:
                 self._tmpout += (
                     'No command entered'.format(cmd)
@@ -273,6 +276,7 @@ class App(object):
                 continue
             # END if
             
+            # run subroutine that matches user input
             try:
                 self.cmd_map[cmd](*args)
                 self.cmd_hist.append('{}({})'.format(cmd, ','.join(args)))
@@ -283,6 +287,7 @@ class App(object):
                 break
             # END try
             
+            # refresh graph ui with results of subroutine
             self.refresh_graph()
         # END while
     # END _idle
@@ -469,43 +474,6 @@ class App(object):
             print '{} {}'.format(type(err), err)
         # try
     # END cycle_state_color
-    
-    @logging_method
-    def filter_reset(self, *args): self._fstk = 'all'
-    
-    @logging_method
-    def filter_set(self, *args):
-        try:
-            self.parse_set(args[0])
-            self._fstk = args[0]
-        except Exception:
-            self._tmpout += 'Failed to set filter; {} not recognized'.format(
-                args[0]
-            )
-        # END try
-    # END filter_set
-    
-    @logging_method
-    def filter_push_union(self, *args):
-        for flt in args:
-            try:
-                self._fstk = [str(flt), self._fstk, '|']
-            except Exception:
-                pass
-            # END try
-        # END for
-    # END add_filter
-    
-    @logging_method
-    def filter_push_intersection(self, *args):
-        for flt in args:
-            try:
-                self._fstk = [str(flt), self._fstk, '&']
-            except Exception:
-                pass
-            # END try
-        # END for
-    # END add_filter
     
     @logging_method
     def plot_summary(self):
@@ -741,6 +709,81 @@ class App(object):
         self.fig.canvas.draw()
     # END refresh_graph
     
+    # Filter management
+    #------------------
+    def eval_fstk(self, a, b=None, op=None):
+        if isinstance(a, list):
+            a = self.eval_fstk(*a)
+        else:
+            a = self.parse_set(a)
+        # END if
+        if b is None: return a
+        if isinstance(b, list):
+            b = self.eval_fstk(*b)
+        else:
+            b = self.parse_set(b)
+        # END if
+        if op == '|':
+            return a | b
+        elif op == '&':
+            return a & b
+        elif op == '-':
+            return a - b
+        else:
+            raise ValueError('{} is not a valid operator'.format(op))
+        # END if
+    # END eval_fstk
+    
+    @logging_method
+    def filter_reset(self, *args): self._fstk = 'all'
+    
+    @logging_method
+    def filter_set(self, *args):
+        try:
+            self.parse_set(args[0])
+            self._fstk = args[0]
+        except Exception:
+            self._tmpout += 'Failed to set filter; {} not recognized'.format(
+                args[0]
+            )
+        # END try
+    # END filter_set
+    
+    @logging_method
+    def filter_push_union(self, *args):
+        for flt in args:
+            try:
+                self._fstk = [str(flt), self._fstk, '|']
+            except Exception:
+                pass
+            # END try
+        # END for
+    # END add_filter
+    
+    @logging_method
+    def filter_push_intersection(self, *args):
+        for flt in args:
+            try:
+                self._fstk = [str(flt), self._fstk, '&']
+            except Exception:
+                pass
+            # END try
+        # END for
+    # END add_filter
+    
+    def parse_set(self, s):
+        if re.search(r'^!', s):
+            return self.eval_fstk('all', s[1:], '-')
+        elif re.search(r'^g:', s):
+            return self.saY.get_group(s[2:])
+        elif self.Ypv.contains_key(s):
+            return self.Ypv.get_group(s)
+        elif s == 'all':
+            return set(self.saY)
+        # END if
+        raise ValueError("{} isn't a valid filter".format(s))
+    # END parse_set
+    
     # Data management and manipulation
     #---------------------------------
     @logging_method
@@ -848,42 +891,6 @@ class App(object):
         return Xout, Yout
     # END get_zdata
     
-    def parse_set(self, s):
-        if re.search(r'^!', s):
-            return self.eval_fstk('all', s[1:], '-')
-        elif re.search(r'^g:', s):
-            return self.saY.get_group(s[2:])
-        elif self.Ypv.contains_key(s):
-            return self.Ypv.get_group(s)
-        elif s == 'all':
-            return set(self.saY)
-        # END if
-        raise ValueError("{} isn't a valid filter".format(s))
-    # END parse_set
-    
-    def eval_fstk(self, a, b=None, op=None):
-        if isinstance(a, list):
-            a = self.eval_fstk(*a)
-        else:
-            a = self.parse_set(a)
-        # END if
-        if b is None: return a
-        if isinstance(b, list):
-            b = self.eval_fstk(*b)
-        else:
-            b = self.parse_set(b)
-        # END if
-        if op == '|':
-            return a | b
-        elif op == '&':
-            return a & b
-        elif op == '-':
-            return a - b
-        else:
-            raise ValueError('{} is not a valid operator'.format(op))
-        # END if
-    # END eval_fstk
-    
     @logging_method
     def get_isolated_unassigned_points(self):
         iso_pnts = []
@@ -921,7 +928,11 @@ class App(object):
         for _ in range(len(files)):
             fn = files.pop(0)
             # TODO: add compatibility for I(V)_mtrx files +"|I(V)_mtrx$"
-            if re.search(r'^jv[^~]+$', fn): files.append(fn)
+            if re.search(r'^jv[^~]+$', fn):
+                files.append(fn)
+            elif fimps.mtrx_supported() and re.search(r'\.I\(V\)_mtrx$', fn):
+                files.append(fn)
+            # END if
         # END for
         files.sort()
         
@@ -941,22 +952,19 @@ class App(object):
         self.cwfile = fn
         self.log.writeln('cwfile set to "{}"'.format(self.cwfile))
         try:
-            if re.search(r'^jv', fn):
-                if os.path.exists(fn+'.sa.csv~'):
-                    # open auto-saved file instead
-                    Y, lbls = fimps.open_jv_autosave(fn+'.sa.csv~')
-                    self._set_data(Y)
-                    # set assignments
-                    for i in range(len(self.Y)):
-                        if lbls[i] != '':
-                            self.saY.assign(lbls[i], self.saY[i])
-                    # END for
-                else:
-                    # open original
-                    self._set_data(fimps.open_jv(self.cwfile))
-                # END if
-            elif re.search(r'\.I(V)_mtrx$', fn):
-                print 'not implemented, yet...'
+            if os.path.exists(fn+'.sa.csv~'):
+                # open auto-saved file instead
+                Y, lbls = fimps.open_autosave(fn+'.sa.csv~')
+                self._set_data(Y)
+                # set assignments
+                for i in range(len(self.Y)):
+                    if lbls[i] != '':
+                        self.saY.assign(lbls[i], self.saY[i])
+                # END for
+            elif re.search(r'^jv', fn):
+                self._set_data(fimps.open_jv(self.cwfile))
+            elif re.search(r'\.I\(V\)_mtrx$', fn):
+                self._set_data(fimps.open_mtrx(self.cwfile))
             else:
                 print 'unknown filetype'
                 return
@@ -967,6 +975,7 @@ class App(object):
             self.log.writeln(
                 'Error opening file | {} {}'.format(type(err), err)
             )
+            self.open_data_file(*args)
         # END try
         
         # start time for speed analysis
