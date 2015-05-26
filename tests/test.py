@@ -6,7 +6,7 @@ import sys
 import traceback
 
 # local modules
-sys.path.append('../')
+sys.path.insert(0, '../')
 import countit
 
 if __name__ == '__main__':

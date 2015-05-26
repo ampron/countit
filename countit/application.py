@@ -788,7 +788,7 @@ class App(object):
     #---------------------------------
     @logging_method
     def _autosave(self):
-        fn = self.cwfile + '.sa.csv~'
+        fn = self.cwfile + '.sa.csv'
         with open(fn, 'w') as f:
             for i in range(len(self.Y)):
                 f.write(
@@ -924,17 +924,20 @@ class App(object):
     def open_data_file(self, *args):
         '''UI Prompt for opening files'''
         # look up all valid files
-        files = os.listdir('.')
-        for _ in range(len(files)):
-            fn = files.pop(0)
-            # TODO: add compatibility for I(V)_mtrx files +"|I(V)_mtrx$"
-            if re.search(r'^jv[^~]+$', fn):
-                files.append(fn)
+        files = set()
+        for fn in os.listdir('.'):
+            if re.search(r'^jv', fn):
+                files.add(fn)
             elif fimps.mtrx_supported() and re.search(r'\.I\(V\)_mtrx$', fn):
-                files.append(fn)
+                files.add(fn)
             # END if
         # END for
-        files.sort()
+        for fn in os.listdir('.'):
+            if re.search(r'\.sa\.csv~?$', fn):
+                files.discard( re.sub(r'\.sa\.csv~?$', '', fn) )
+                files.add(fn)
+        # END for
+        files = sorted(files)
         
         for i in range(len(files)):
             print '({:<2d}) {}'.format(i+1, files[i])
@@ -952,9 +955,9 @@ class App(object):
         self.cwfile = fn
         self.log.writeln('cwfile set to "{}"'.format(self.cwfile))
         try:
-            if os.path.exists(fn+'.sa.csv~'):
+            if re.search(r'\.sa\.csv~?', fn):
                 # open auto-saved file instead
-                Y, lbls = fimps.open_autosave(fn+'.sa.csv~')
+                Y, lbls = fimps.open_autosave(fn)
                 self._set_data(Y)
                 # set assignments
                 for i in range(len(self.Y)):
