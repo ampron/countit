@@ -788,7 +788,7 @@ class App(object):
     #---------------------------------
     @logging_method
     def _autosave(self):
-        fn = self.cwfile + '.sa.csv'
+        fn = re.sub(r'\.sa\.csv~?', '', self.cwfile) + '.sa.csv'
         with open(fn, 'w') as f:
             for i in range(len(self.Y)):
                 f.write(
@@ -954,6 +954,7 @@ class App(object):
         
         self.cwfile = fn
         self.log.writeln('cwfile set to "{}"'.format(self.cwfile))
+        self._mtrx_data = None
         try:
             if re.search(r'\.sa\.csv~?', fn):
                 # open auto-saved file instead
@@ -964,10 +965,15 @@ class App(object):
                     if lbls[i] != '':
                         self.saY.assign(lbls[i], self.saY[i])
                 # END for
+                # try to recover rich MTRX data
+                mtrx_fn = re.sub(r'\.sa\.csv~?', '', fn)
+                if os.path.exists(mtrx_fn):
+                    self._mtrx_data = fimps.open_mtrx(mtrx_fn)
             elif re.search(r'^jv', fn):
                 self._set_data(fimps.open_jv(self.cwfile))
             elif re.search(r'\.I\(V\)_mtrx$', fn):
-                self._set_data(fimps.open_mtrx(self.cwfile))
+                self._mtrx_data = fimps.open_mtrx(self.cwfile)
+                self._set_data(self._mtrx_data.Y)
             else:
                 print 'unknown filetype'
                 return
@@ -980,6 +986,14 @@ class App(object):
             )
             self.open_data_file(*args)
         # END try
+        
+        try:
+            self._mtrx_data.props['Spectroscopy_Raster_Time_1']
+            self._tmpout = 'MTRX meta data loaded'
+        except Exception:
+            if self._mtrx_data:
+                self._tmpout = 'MTRX meta data failed to load'
+        # try
         
         # start time for speed analysis
         self.open_time = time.time()
@@ -1014,11 +1028,17 @@ class App(object):
     
     @logging_method
     def save_assignments(self, save_name=None):
+        # Sorted list of labels
+        labels = sorted(self.saY.keys())
+        
         # Create a list of just the assigned data points
-        labels = [(i,lbl) for i,lbl in enumerate(self.saY.list_memberships())]
-        for i in range(len(labels)):
-            i_lbl = labels.pop(0)
-            if i_lbl[1] is not None: labels.append(i_lbl)
+        lbld_pnts = [ (i,lbl) for i,lbl in     
+                      enumerate(self.saY.list_memberships())
+                    ]
+        # purge unassigned data points
+        for i in range(len(lbld_pnts)):
+            i_lbl = lbld_pnts.pop(0)
+            if i_lbl[1] is not None: lbld_pnts.append(i_lbl)
         # END for
         
         # Create label re-mapping to sorted numbers
@@ -1031,6 +1051,10 @@ class App(object):
         # END if
         st_means.sort(key=lambda tup: tup[1])
         newlbl = {tup[0]: i for i, tup in enumerate(st_means)}
+        
+        # Adjacency matrix
+        lbl_i = {lbl: i for i, lbl in enumerate(labels)}
+        M = [[0 for j in labels] for i in labels]
         
         # Get input arguments from user
         if save_name is None:
@@ -1064,40 +1088,97 @@ class App(object):
         f.write('# working time: {} s\n'.format(time.time()-self.open_time))
         # write entrance points
         f.write('# Entrance points\n')
-        f.write('{}\n'.format(labels[0][0]))
-        for i in range(1, len(labels)):
-            if labels[i][1] != labels[i-1][1]:
-                f.write('{}\n'.format(labels[i][0]))
+        f.write('{}\n'.format(lbld_pnts[0][0]))
+        for i in range(1, len(lbld_pnts)):
+            lblpnt = lbld_pnts[i]
+            prev_lblpnt = lbld_pnts[i-1]
+            if lblpnt[1] != prev_lblpnt[1]:
+                f.write('{}\n'.format(lblpnt[0]))
+                # fill adjacency matrix
+                row = lbl_i[prev_lblpnt[1]]
+                col = lbl_i[lblpnt[1]]
+                M[row][col] += 1
+            # END if
         # END for
         # write exit points
         f.write('# Exit points\n')
-        for i in range(len(labels)-1):
-            if labels[i][1] != labels[i+1][1]:
-                f.write('{}\n'.format(labels[i][0]))
+        for i in range(len(lbld_pnts)-1):
+            lblpnt = lbld_pnts[i]
+            next_lblpnt = lbld_pnts[i+1]
+            if lblpnt[1] != next_lblpnt[1]:
+                f.write('{}\n'.format(lblpnt[0]))
         # END for
-        f.write('{}\n'.format(labels[-1][0]))
+        f.write('{}\n'.format(lbld_pnts[-1][0]))
         # write labels
         f.write('# State labels\n')
-        f.write('{}\n'.format(labels[0][1]))
-        for i in range(1, len(labels)):
-            if labels[i][1] != labels[i-1][1]:
-                f.write('{}\n'.format(newlbl[ labels[i][1] ]))
+        f.write('{}\n'.format(lbld_pnts[0][1]))
+        for i in range(1, len(lbld_pnts)):
+            lblpnt = lbld_pnts[i]
+            prev_lblpnt = lbld_pnts[i-1]
+            if lblpnt[1] != prev_lblpnt[1]:
+                f.write('{}\n'.format(newlbl[lblpnt[1]]))
         # END for
         f.close()
         self.log.writeln('saved "{}"'.format(save_name))
         
-        # Save a corresponding graph
+        # Save a corresponding vizualization
         img_name = re.sub(r'\.[^.]+$', '', save_name) + '.png'
         fig = self.plot_summary()
         fig.savefig(img_name, dpi=150)
         plt.close(fig)
         self.log.writeln('saved "{}"'.format(img_name))
+        
+        # Save transition graph
+        save_name = re.sub(r'\.sa\.csv', '', self.cwfile)
+        save_name = re.sub(
+            r'\.[^.]*$', '.transmtrx.csv', save_name
+        )
+        with open(save_name, 'w') as f:
+            f.write(','.join(labels))
+            f.write('\n')
+            for i in range(len(M)):
+                f.write( ','.join([str(n) for n in M[i]]) )
+                f.write('\n')
+                # END for
+            # END for
+        # END with
+        
+        # Save lifetimes
+        try:
+            # times in seconds
+            dt = self._mtrx_data.props['Spectroscopy_Raster_Time_1'].value
+            unit = self._mtrx_data.props['Spectroscopy_Raster_Time_1'].unit
+            fmt = '{:0.8e}'
+        except (AttributeError, KeyError):
+            dt = 1
+            unit = 'pnts'
+            fmt = '{}'
+        lifetimes = self.calc_lifetimes(dt=dt)
+        save_name = re.sub(r'\.sa\.csv', '', self.cwfile)
+        save_name = re.sub(
+            r'\.[^.]*$', '.lives_in_{}.csv'.format(unit), save_name
+        )
+        with open(save_name, 'w') as f:
+            for lbl in labels:
+                f.write(lbl)
+                f.write(',')
+                t_strs = [fmt.format(t) for t in lifetimes[lbl]]
+                f.write(','.join(t_strs))
+                f.write('\n')
+            # END for
+        # END with
+        
     # END save_assignments
     
     # Analysis
     #---------
     @logging_method
-    def calc_lifetimes(self):
+    def calc_lifetimes(self, dt=1):
+        '''Calculate state occurrence lifetimes in number of data points
+        
+        Returns:
+            (dict) {lbl_0: [T0, T1, T2, ...], lbl_1: [...], lbl_2: [...], ...}
+        '''
         lifetimes = {lbl: [] for lbl in self.saY.keys()}
         labels = [(i,lbl) for i,lbl in enumerate(self.saY.list_memberships())]
         # purge all unassigned points
@@ -1111,7 +1192,7 @@ class App(object):
         i0 = labels[0][0]
         for i in range(1, len(labels)):
             if labels[i-1][1] != labels[i][1]:
-                lifetimes[labels[i-1][1]].append( labels[i-1][0]+1 - i0 )
+                lifetimes[labels[i-1][1]].append( dt*(labels[i-1][0]+1 - i0) )
                 i0 = labels[i][0]
             # END if
         # END for

@@ -1,7 +1,7 @@
-countIt *Development*
-=====================
+countIt
+=======
 
-Created by Dr. Alex Pronschinske
+Created by Alex Pronschinske
    (email: ampron@gmail.com)
 
 Python application to assist in state assignment of noisy data from a system displaying time-dependent switching between quantized states
@@ -15,6 +15,7 @@ This package has the following dependencies:
     * scipy >= 0.9.0 (lower versions are untested)
     * matplotlib >= 1.1.0
     * scikit-learn >= 0.15.2
+    * pyMTRX >= 1.6.0 (optional)
 
 Known Bug List
 ==============

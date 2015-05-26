@@ -68,7 +68,7 @@ def open_mtrx(file_name):
         all_Ys = ex.import_spectra(file_name)
     except IOError:
         all_Ys = pyMTRX.import_spectra(file_name)
-    return all_Ys[0].Y
+    return all_Ys[0]
 # END open_jv
 
 #==============================================================================

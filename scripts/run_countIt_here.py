@@ -1,4 +1,4 @@
-#!/usr/bin python2.7
+#!/usr/bin/python
 # -*- encoding: UTF-8 -*-
 
 # built-in modules
