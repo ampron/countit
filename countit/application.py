@@ -14,11 +14,13 @@ import time
 import re
 import math
 from pprint import pprint
+import pdb
 
 # local modules
 from loggers import HardLogger
 from numerical import SG_smooth
 import file_importers as fimps
+from transition_matrix import TransMatrix
 
 # third-party modules
 from grouped_lists import GroupedList, ColoredList
@@ -58,10 +60,10 @@ plt.rcParams['keymap.zoom'] = 'z'
 plt.rcParams['keymap.all_axes'] = ''
 
 base_menu = '''Program Options:
-  quit ... Quit
-  open ... Open raw data
-  save ... Save state assignments
-  a ...... Select all
+  quit ................... Quit
+  open ................... Open raw data
+  save [file_name.ext] ... Save state assignments
+  a ...................... Select all
 View Options:
   line ............ Toggle line display
   color [lbl] ..... Re-color state
@@ -79,6 +81,7 @@ Assignment Options:
   ro ..................... Re-order state labels from high to low
   z ...................... Undo last state assignment
   lock ................... Toggle assignment lock
+  rn [lbl] [name] ........ Rename state [lbl] to [name]
   as [label].............. Assign single state from selection
   am [N] ................. Assign [N] states from selection
   am2d ................... Assign multiple states from selection in 2-D
@@ -138,7 +141,7 @@ class App(object):
         refresh_graph
     '''
     
-    __version__ = '1.3.0'
+    __version__ = '1.5.0'
     
     def __init__(self, debug_mode=False):
         self._dbm = debug_mode
@@ -199,6 +202,7 @@ class App(object):
             'ro': self.reorder_labels,
             'z': self.undo_assignment,
             'lock': self.toggle_lock,
+            'rn': self.rename_state,
             'as': self.assign_selection,
             'am': self.multiassign_1D_KMeans,
             'am2d': self.multiassign_2D_KMeans,
@@ -784,11 +788,11 @@ class App(object):
         raise ValueError("{} isn't a valid filter".format(s))
     # END parse_set
     
-    # Data management and manipulation
-    #---------------------------------
+    # Input/Output
+    #-------------
     @logging_method
     def _autosave(self):
-        fn = self.cwfile + '.sa.csv~'
+        fn = re.sub(r'\.sa\.csv~?', '', self.cwfile) + '.sa.csv'
         with open(fn, 'w') as f:
             for i in range(len(self.Y)):
                 f.write(
@@ -799,6 +803,251 @@ class App(object):
             # END for
         # END with
     # END _autosave
+    
+    @logging_method
+    def open_data_file(self, *args):
+        '''UI Prompt for opening files'''
+        # look up all valid files
+        files = set()
+        for fn in os.listdir('.'):
+            if re.search(r'^jv', fn):
+                files.add(fn)
+            elif fimps.mtrx_supported() and re.search(r'\.I\(V\)_mtrx$', fn):
+                files.add(fn)
+            # END if
+        # END for
+        for fn in os.listdir('.'):
+            if re.search(r'\.sa\.csv~?$', fn):
+                files.discard( re.sub(r'\.sa\.csv~?$', '', fn) )
+                files.add(fn)
+        # END for
+        files = sorted(files)
+        
+        for i in range(len(files)):
+            print '({:<2d}) {}'.format(i+1, files[i])
+        # END for
+        print '(X ) abort'
+        
+        try:
+            fnum = self._int_input('Select file >>> ', 1, len(files)+1) - 1
+        except RuntimeError:
+            print 'abort'
+            return
+        # END try
+        fn = files[fnum]
+        
+        self.cwfile = fn
+        self.log.writeln('cwfile set to "{}"'.format(self.cwfile))
+        self._mtrx_data = None
+        try:
+            if re.search(r'\.sa\.csv~?', fn):
+                # open auto-saved file instead
+                Y, lbls = fimps.open_autosave(fn)
+                self._set_data(Y)
+                # set assignments
+                for i in range(len(self.Y)):
+                    if lbls[i] != '':
+                        self.saY.assign(lbls[i], self.saY[i])
+                # END for
+                # try to recover rich MTRX data
+                mtrx_fn = re.sub(r'\.sa\.csv~?', '', fn)
+                try:
+                    self._mtrx_data = fimps.open_mtrx(mtrx_fn)
+                except (IOError, ValueError):
+                    pass
+                # END try
+            elif re.search(r'^jv', fn):
+                self._set_data(fimps.open_jv(self.cwfile))
+            elif re.search(r'\.I\(V\)_mtrx$', fn):
+                self._mtrx_data = fimps.open_mtrx(self.cwfile)
+                self._set_data(self._mtrx_data.Y)
+            else:
+                print 'unknown filetype'
+                return
+            # END if
+        except Exception as err:
+            print 'Error opening file'
+            print '{}: {}'.format(type(err).__name__, err)
+            self.log.writeln(
+                'Error opening file | {} {}'.format(type(err), err)
+            )
+            if self._dbm: pdb.set_trace()
+            self.open_data_file(*args)
+        # END try
+        
+        try:
+            self._mtrx_data.props['Spectroscopy_Raster_Time_1']
+            self._tmpout = 'MTRX meta data loaded'
+        except Exception:
+            if self._mtrx_data:
+                self._tmpout = 'MTRX meta data failed to load'
+        # try
+        
+        # start time for speed analysis
+        self.open_time = time.time()
+        self.log.writeln('file opened at {} s'.format(int(self.open_time)))
+        
+        # create new command history
+        self.cmd_hist = []
+    # END open_data_file
+    
+    @logging_method
+    def save_assignments(self, save_name=None):
+        # Sorted list of labels
+        labels = sorted(self.saY.keys())
+        
+        # Create a list of just the assigned data points
+        lbld_pnts = [ (i,lbl) for i,lbl in     
+                      enumerate(self.saY.list_memberships())
+                    ]
+        # purge unassigned data points
+        for i in range(len(lbld_pnts)):
+            i_lbl = lbld_pnts.pop(0)
+            if i_lbl[1] is not None: lbld_pnts.append(i_lbl)
+        # END for
+        
+        # Create label re-mapping to sorted numbers
+        st_means = [ (k, np.mean(np.array(list(self.saY.get_group(k)))[:,1]) )
+                     for k in self.saY.keys()
+                   ]
+        if len(st_means) == 0:
+            print 'No assignments to save'
+            return
+        # END if
+        st_means.sort(key=lambda tup: tup[1])
+        newlbl = {tup[0]: i for i, tup in enumerate(st_means)}
+        
+        # Adjacency matrix
+        lbl_i = {lbl: i for i, lbl in enumerate(labels)}
+        M = [[0 for j in labels] for i in labels]
+        
+        # Get input arguments from user
+        if save_name is None:
+            print 'Current working file: {}'.format(self.cwfile)
+            save_name = raw_input('File name >>> ')
+            self.log.writeln(save_name, t='ui')
+            if save_name == '':
+                print 'abort saving'
+                return
+            # END if
+        # END if
+        if os.path.exists(save_name):
+            response = raw_input(
+                save_name+' already exists, overwrite file? [Y/n] >>> '
+            )
+            if re.search(r'y', response, re.IGNORECASE):
+                pass
+            else:
+                print 'abort saving'
+                return
+            # END if
+        # END if
+        try:
+            f = open(save_name, 'w')
+        except OSError:
+            print 'Filename is invalid'
+            return
+        # END try
+        # write signature
+        f.write('# Analyst: {}\n'.format(self.sig))
+        f.write('# working time: {} s\n'.format(time.time()-self.open_time))
+        # write entrance points
+        f.write('# Entrance points\n')
+        f.write('{}\n'.format(lbld_pnts[0][0]))
+        for i in range(1, len(lbld_pnts)):
+            lblpnt = lbld_pnts[i]
+            prev_lblpnt = lbld_pnts[i-1]
+            if lblpnt[1] != prev_lblpnt[1]:
+                f.write('{}\n'.format(lblpnt[0]))
+                # fill adjacency matrix
+                row = lbl_i[prev_lblpnt[1]]
+                col = lbl_i[lblpnt[1]]
+                M[row][col] += 1
+            # END if
+        # END for
+        # write exit points
+        f.write('# Exit points\n')
+        for i in range(len(lbld_pnts)-1):
+            lblpnt = lbld_pnts[i]
+            next_lblpnt = lbld_pnts[i+1]
+            if lblpnt[1] != next_lblpnt[1]:
+                f.write('{}\n'.format(lblpnt[0]))
+        # END for
+        f.write('{}\n'.format(lbld_pnts[-1][0]))
+        # write labels
+        f.write('# State labels\n')
+        f.write('{}\n'.format(lbld_pnts[0][1]))
+        for i in range(1, len(lbld_pnts)):
+            lblpnt = lbld_pnts[i]
+            prev_lblpnt = lbld_pnts[i-1]
+            if lblpnt[1] != prev_lblpnt[1]:
+                f.write('{}\n'.format(newlbl[lblpnt[1]]))
+        # END for
+        f.close()
+        self.log.writeln('saved "{}"'.format(save_name))
+        
+        # Save a corresponding vizualization
+        img_name = re.sub(r'\.[^.]+$', '', save_name) + '.png'
+        fig = self.plot_summary()
+        fig.savefig(img_name, dpi=150)
+        plt.close(fig)
+        self.log.writeln('saved "{}"'.format(img_name))
+        
+        # Save transition graph
+        G = TransMatrix(M, labels)
+        G_name = re.sub(r'\.[^.]+$', '', save_name) + '.transmtrx.csv'
+        G.save_csv(G_name)
+        
+        # Save lifetimes
+        try:
+            # times in seconds
+            dt = self._mtrx_data.props['Spectroscopy_Raster_Time_1'].value
+            unit = self._mtrx_data.props['Spectroscopy_Raster_Time_1'].unit
+            fmt = '{:0.8e}'
+        except (AttributeError, KeyError):
+            dt = 1
+            unit = 'pnts'
+            fmt = '{}'
+        lifetimes = self.calc_lifetimes(dt=dt)
+        T_name = ( re.sub(r'\.[^.]+$', '', save_name) +
+                   '.lives_in_{}.csv'.format(unit)
+                 )
+        with open(T_name, 'w') as f:
+            for lbl in labels:
+                f.write('"{}"'.format(lbl))
+                f.write(',')
+                t_strs = [fmt.format(t) for t in lifetimes[lbl]]
+                f.write(','.join(t_strs))
+                f.write('\n')
+            # END for
+        # END with
+        
+    # END save_assignments
+    
+    # Data management and manipulation
+    #---------------------------------
+    def _set_data(self, Y):
+        self.Y = np.array(Y)
+        self.Y -= np.min(self.Y)
+        self.Y /= 1.01*np.max(self.Y)
+        self._Y_orig = np.array(Y)
+        self.saY = ColoredList( zip(range(len(Y)), self.Y) )
+        self.zrng = ( (0, min(self.Y)), (len(self.Y)-1, max(self.Y)) )
+        
+        self.Ypv = GroupedList( self.saY )
+        dY_f = np.diff(self.Y)
+        for i in range(1, len(self.Y)-1):
+            if 0 < dY_f[i-1] and dY_f[i] < 0:
+                self.Ypv.assign('peak', self.Ypv[i])
+            elif dY_f[i-1] < 0 and 0 < dY_f[i]:
+                self.Ypv.assign('valley', self.Ypv[i])
+            else:
+                self.Ypv.assign('slope', self.Ypv[i])
+            # END if
+        # END for
+        
+        self._sm_func = lambda: self.Y
+    # END set_data
     
     def next_autoname(self, reset_enable=True):
         # Check for automatic reset
@@ -920,181 +1169,15 @@ class App(object):
         return iso_pnts
     # END get_isolated_unassigned_points
     
-    @logging_method
-    def open_data_file(self, *args):
-        '''UI Prompt for opening files'''
-        # look up all valid files
-        files = os.listdir('.')
-        for _ in range(len(files)):
-            fn = files.pop(0)
-            # TODO: add compatibility for I(V)_mtrx files +"|I(V)_mtrx$"
-            if re.search(r'^jv[^~]+$', fn):
-                files.append(fn)
-            elif fimps.mtrx_supported() and re.search(r'\.I\(V\)_mtrx$', fn):
-                files.append(fn)
-            # END if
-        # END for
-        files.sort()
-        
-        for i in range(len(files)):
-            print '({:<2d}) {}'.format(i+1, files[i])
-        # END for
-        print '(X ) abort'
-        
-        try:
-            fnum = self._int_input('Select file >>> ', 1, len(files)+1) - 1
-        except RuntimeError:
-            print 'abort'
-            return
-        # END try
-        fn = files[fnum]
-        
-        self.cwfile = fn
-        self.log.writeln('cwfile set to "{}"'.format(self.cwfile))
-        try:
-            if os.path.exists(fn+'.sa.csv~'):
-                # open auto-saved file instead
-                Y, lbls = fimps.open_autosave(fn+'.sa.csv~')
-                self._set_data(Y)
-                # set assignments
-                for i in range(len(self.Y)):
-                    if lbls[i] != '':
-                        self.saY.assign(lbls[i], self.saY[i])
-                # END for
-            elif re.search(r'^jv', fn):
-                self._set_data(fimps.open_jv(self.cwfile))
-            elif re.search(r'\.I\(V\)_mtrx$', fn):
-                self._set_data(fimps.open_mtrx(self.cwfile))
-            else:
-                print 'unknown filetype'
-                return
-            # END if
-        except Exception as err:
-            print 'Error opening file'
-            print '{} {}'.format(type(err), err)
-            self.log.writeln(
-                'Error opening file | {} {}'.format(type(err), err)
-            )
-            self.open_data_file(*args)
-        # END try
-        
-        # start time for speed analysis
-        self.open_time = time.time()
-        self.log.writeln('file opened at {} s'.format(int(self.open_time)))
-        
-        # create new command history
-        self.cmd_hist = []
-    # END open_data_file
-    
-    def _set_data(self, Y):
-        self.Y = np.array(Y)
-        self.Y -= np.min(self.Y)
-        self.Y /= 1.01*np.max(self.Y)
-        self._Y_orig = np.array(Y)
-        self.saY = ColoredList( zip(range(len(Y)), self.Y) )
-        self.zrng = ( (0, min(self.Y)), (len(self.Y)-1, max(self.Y)) )
-        
-        self.Ypv = GroupedList( self.saY )
-        dY_f = np.diff(self.Y)
-        for i in range(1, len(self.Y)-1):
-            if 0 < dY_f[i-1] and dY_f[i] < 0:
-                self.Ypv.assign('peak', self.Ypv[i])
-            elif dY_f[i-1] < 0 and 0 < dY_f[i]:
-                self.Ypv.assign('valley', self.Ypv[i])
-            else:
-                self.Ypv.assign('slope', self.Ypv[i])
-            # END if
-        # END for
-        
-        self._sm_func = lambda: self.Y
-    # END set_data
-    
-    @logging_method
-    def save_assignments(self, save_name=None):
-        # Create a list of just the assigned data points
-        labels = [(i,lbl) for i,lbl in enumerate(self.saY.list_memberships())]
-        for i in range(len(labels)):
-            i_lbl = labels.pop(0)
-            if i_lbl[1] is not None: labels.append(i_lbl)
-        # END for
-        
-        # Create label re-mapping to sorted numbers
-        st_means = [ (k, np.mean(np.array(list(self.saY.get_group(k)))[:,1]) )
-                     for k in self.saY.keys()
-                   ]
-        if len(st_means) == 0:
-            print 'No assignments to save'
-            return
-        # END if
-        st_means.sort(key=lambda tup: tup[1])
-        newlbl = {tup[0]: i for i, tup in enumerate(st_means)}
-        
-        # Get input arguments from user
-        if save_name is None:
-            print 'Current working file: {}'.format(self.cwfile)
-            save_name = raw_input('File name >>> ')
-            self.log.writeln(save_name, t='ui')
-            if save_name == '':
-                print 'abort saving'
-                return
-            # END if
-        # END if
-        if os.path.exists(save_name):
-            response = raw_input(
-                save_name+' already exists, overwrite file? [Y/n] >>> '
-            )
-            if re.search(r'y', response, re.IGNORECASE):
-                pass
-            else:
-                print 'abort saving'
-                return
-            # END if
-        # END if
-        try:
-            f = open(save_name, 'w')
-        except OSError:
-            print 'Filename is invalid'
-            return
-        # END try
-        # write signature
-        f.write('# Analyst: {}\n'.format(self.sig))
-        f.write('# working time: {} s\n'.format(time.time()-self.open_time))
-        # write entrance points
-        f.write('# Entrance points\n')
-        f.write('{}\n'.format(labels[0][0]))
-        for i in range(1, len(labels)):
-            if labels[i][1] != labels[i-1][1]:
-                f.write('{}\n'.format(labels[i][0]))
-        # END for
-        # write exit points
-        f.write('# Exit points\n')
-        for i in range(len(labels)-1):
-            if labels[i][1] != labels[i+1][1]:
-                f.write('{}\n'.format(labels[i][0]))
-        # END for
-        f.write('{}\n'.format(labels[-1][0]))
-        # write labels
-        f.write('# State labels\n')
-        f.write('{}\n'.format(labels[0][1]))
-        for i in range(1, len(labels)):
-            if labels[i][1] != labels[i-1][1]:
-                f.write('{}\n'.format(newlbl[ labels[i][1] ]))
-        # END for
-        f.close()
-        self.log.writeln('saved "{}"'.format(save_name))
-        
-        # Save a corresponding graph
-        img_name = re.sub(r'\.[^.]+$', '', save_name) + '.png'
-        fig = self.plot_summary()
-        fig.savefig(img_name, dpi=150)
-        plt.close(fig)
-        self.log.writeln('saved "{}"'.format(img_name))
-    # END save_assignments
-    
     # Analysis
     #---------
     @logging_method
-    def calc_lifetimes(self):
+    def calc_lifetimes(self, dt=1):
+        '''Calculate state occurrence lifetimes in number of data points
+        
+        Returns:
+            (dict) {lbl_0: [T0, T1, T2, ...], lbl_1: [...], lbl_2: [...], ...}
+        '''
         lifetimes = {lbl: [] for lbl in self.saY.keys()}
         labels = [(i,lbl) for i,lbl in enumerate(self.saY.list_memberships())]
         # purge all unassigned points
@@ -1108,7 +1191,7 @@ class App(object):
         i0 = labels[0][0]
         for i in range(1, len(labels)):
             if labels[i-1][1] != labels[i][1]:
-                lifetimes[labels[i-1][1]].append( labels[i-1][0]+1 - i0 )
+                lifetimes[labels[i-1][1]].append( dt*(labels[i-1][0]+1 - i0) )
                 i0 = labels[i][0]
             # END if
         # END for
@@ -1269,6 +1352,13 @@ class App(object):
                                )
         # END for
     # END reorder_labels
+    
+    @logging_method
+    def rename_state(self, stlbl, new_lbl, *args):
+        if stlbl not in self.saY.keys(): return
+        self.saY.commit()
+        self.saY.overassign(new_lbl, *list(self.saY.get_group(stlbl)))
+    # END rename_state
     
     @logging_method
     def toggle_lock(self, *args): self.saY.toggle_reassign()

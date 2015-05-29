@@ -62,8 +62,13 @@ def open_autosave(file_name):
 
 #==============================================================================
 def open_mtrx(file_name):
-    all_Ys = pyMTRX.import_spectra(file_name)
-    return all_Ys[0].Y
+    exp_fname = re.sub(r'--.+$', '_0001.mtrx', file_name)
+    try:
+        ex = pyMTRX.Experiment(exp_fname)
+        all_Ys = ex.import_spectra(file_name)
+    except IOError:
+        all_Ys = pyMTRX.import_spectra(file_name)
+    return all_Ys[0]
 # END open_jv
 
 #==============================================================================

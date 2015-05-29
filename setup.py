@@ -3,7 +3,7 @@
 from distutils.core import setup
 
 setup( name='countIt',
-       version='1.3.0',
+       version='1.5.0',
        description="Python application to assist in state assignment of noisy data from a system displaying time-dependent switching between quantized states",
        author='Alex Pronschinske',
        url='https://www.github.com/ampron',
