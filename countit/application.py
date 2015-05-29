@@ -60,10 +60,10 @@ plt.rcParams['keymap.zoom'] = 'z'
 plt.rcParams['keymap.all_axes'] = ''
 
 base_menu = '''Program Options:
-  quit ... Quit
-  open ... Open raw data
-  save ... Save state assignments
-  a ...... Select all
+  quit ................... Quit
+  open ................... Open raw data
+  save [file_name.ext] ... Save state assignments
+  a ...................... Select all
 View Options:
   line ............ Toggle line display
   color [lbl] ..... Re-color state
@@ -141,7 +141,7 @@ class App(object):
         refresh_graph
     '''
     
-    __version__ = '1.3.0'
+    __version__ = '1.5.0'
     
     def __init__(self, debug_mode=False):
         self._dbm = debug_mode
